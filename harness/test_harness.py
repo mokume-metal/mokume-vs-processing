@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 import cases
+import run
 import stats
 
 
@@ -40,6 +41,44 @@ class SummarizeTests(unittest.TestCase):
     def test_rejects_empty(self):
         with self.assertRaises(ValueError):
             stats.summarize([])
+
+
+def fake_summary(implementations, counts):
+    runs = [{"implementation": i, "count": c, "frames": 300, "fps": 60.0 if i == "mokume" else 30.0,
+             "mean_ms": 16.7, "p50_ms": 16.7, "p95_ms": 17.0, "p99_ms": 120.5}
+            for c in counts for i in implementations]
+    return {"case": "demo", "machine": {"model": "Mac17,2", "chip": "Apple M5", "macos": "26.6"},
+            "versions": {"mokume": "0.11.2", "processing": "4.5.2"}, "warmup_s": 2, "measure_s": 5,
+            "runs": runs}
+
+
+class TableTests(unittest.TestCase):
+    def test_terminal_table_columns_line_up(self):
+        counts = [1000, 100000]
+        text = run.terminal_table(fake_summary(run.IMPLEMENTATIONS, counts), counts, list(run.IMPLEMENTATIONS))
+        rows = [line for line in text.splitlines() if "|" in line and "-+-" not in line]
+        # 見出し・小見出し・各段で、区切りの位置が揃っている
+        positions = {tuple(i for i, ch in enumerate(line) if ch == "|") for line in rows}
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(len(rows), 2 + len(counts))
+
+    def test_ratio_is_mokume_over_processing(self):
+        counts = [1000]
+        text = run.terminal_table(fake_summary(run.IMPLEMENTATIONS, counts), counts, list(run.IMPLEMENTATIONS))
+        self.assertIn("2.00x", text)
+
+    def test_single_side_has_no_ratio(self):
+        counts = [1000]
+        text = run.terminal_table(fake_summary(["processing"], counts), counts, ["processing"])
+        self.assertNotIn("ratio", text)
+
+    def test_both_tables_carry_the_conditions_line(self):
+        counts = [1000]
+        summary = fake_summary(run.IMPLEMENTATIONS, counts)
+        for table in (run.terminal_table, run.markdown_table):
+            last = table(summary, counts, list(run.IMPLEMENTATIONS)).splitlines()[-1]
+            self.assertEqual(last, run.conditions(summary))
+            self.assertIn("mokume 0.11.2", last)
 
 
 class CaseLayoutTests(unittest.TestCase):

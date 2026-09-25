@@ -10,8 +10,11 @@
 - Processing 側は Processing.app の `cli --run` で起こす。場所は `MVP_PROCESSING` で変えられる
 - どちらも窓を出す。**計測中は他の窓を前に出さない** (背面に回ると描画の頻度が落ちる)
 
-結果は `results/<事例>-<時刻>/` に置く (gitignore 済み)。生の記録 1 回ぶんずつと、
-`summary.json`、そして貼り付け用の Markdown の表を標準出力に出す。
+結果は `results/<事例>-<時刻>/` に置く (gitignore 済み): 生の記録 1 回ぶんずつ・`summary.json`・
+貼り付け用の Markdown の表 `summary.md`・子プロセスの出力 `logs/`。
+
+端末には、途中は 1 回ごとの進み具合を 1 行ずつ (stderr)、最後に両側を並べた表を stdout に出す。
+子プロセスの出力は `logs/` へ逃がし、失敗したときだけ末尾を端末に出す。
 """
 
 from __future__ import annotations
@@ -39,9 +42,28 @@ def capture(command: List[str], cwd: Optional[Path] = None) -> str:
     return subprocess.run(command, cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
-def build_mokume(package: Path) -> Path:
+def run_logged(command: List[str], log: Path, *, cwd: Optional[Path] = None,
+               env: Optional[Dict[str, str]] = None, timeout: Optional[float] = None) -> None:
+    """出力を `log` へ書いて回す。失敗したら末尾を端末に出して止まる。"""
+    log.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with log.open("w") as handle:
+            subprocess.run(command, cwd=cwd, env=env, timeout=timeout, check=True,
+                           stdout=handle, stderr=subprocess.STDOUT)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"{timeout:.0f} 秒で終わらなかった: {' '.join(command)}\n{tail(log)}")
+    except subprocess.CalledProcessError as error:
+        raise SystemExit(f"失敗した (終了コード {error.returncode}): {' '.join(command)}\n{tail(log)}")
+
+
+def tail(log: Path, lines: int = 20) -> str:
+    text = log.read_text(errors="replace").splitlines() if log.is_file() else []
+    return "\n".join([f"--- {log} の末尾 ---", *text[-lines:]])
+
+
+def build_mokume(package: Path, logs: Path) -> Path:
     print(f"build: {package.relative_to(cases.ROOT)} (release)", file=sys.stderr)
-    subprocess.run(["swift", "build", "-c", "release"], cwd=package, check=True)
+    run_logged(["swift", "build", "-c", "release"], logs / "mokume-build.log", cwd=package)
     description = json.loads(capture(["swift", "package", "describe", "--type", "json"], cwd=package))
     executables = [p["name"] for p in description["products"] if "executable" in p["type"]]
     if len(executables) != 1:
@@ -81,16 +103,13 @@ def machine() -> Dict[str, Optional[str]]:
     }
 
 
-def run_once(command: List[str], env: Dict[str, str], output: Path, timeout: float) -> Dict[str, object]:
+def run_once(command: List[str], env: Dict[str, str], output: Path, log: Path,
+             timeout: float) -> Dict[str, object]:
     """1 回起こして記録を読む。**待つ側が期限を持つ** — 窓が閉じずに残ったら殺して失敗にする。"""
     output.unlink(missing_ok=True)
-    try:
-        subprocess.run(command, env={**os.environ, **env}, timeout=timeout, check=True,
-                       stdout=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        raise SystemExit(f"{timeout:.0f} 秒で終わらなかった: {' '.join(command)}")
+    run_logged(command, log, env={**os.environ, **env}, timeout=timeout)
     if not output.is_file():
-        raise SystemExit(f"記録が書かれなかった: {output}")
+        raise SystemExit(f"記録が書かれなかった: {output}\n{tail(log)}")
     return json.loads(output.read_text())
 
 
@@ -116,10 +135,11 @@ def main() -> None:
     out = (args.out or cases.ROOT / "results" / f"{case.name}-{stamp}").resolve()
     out.mkdir(parents=True, exist_ok=True)
 
+    logs = out / "logs"
     processing = os.environ.get("MVP_PROCESSING", DEFAULT_PROCESSING)
     commands: Dict[str, List[str]] = {}
     if "mokume" in implementations:
-        commands["mokume"] = [str(build_mokume(case.mokume))]
+        commands["mokume"] = [str(build_mokume(case.mokume, logs))]
     if "processing" in implementations:
         # --output はスケッチフォルダと別の場所でなければならず、--force は中身を消してから書く
         commands["processing"] = [processing, "cli", f"--sketch={case.processing}",
@@ -128,16 +148,22 @@ def main() -> None:
     # Processing の cli は毎回コンパイルから始めるので、その分の余裕を見る
     timeout = args.warmup + args.measure + 120
     runs = []
+    total = len(counts) * len(implementations)
+    width = max(len(i) for i in implementations)
     for count in counts:
         for implementation in implementations:
-            record_path = out / f"{implementation}-{count}.json"
-            print(f"run: {implementation} count={count}", file=sys.stderr)
+            name = f"{implementation}-{count}"
+            record_path = out / f"{name}.json"
+            print(f"[{len(runs) + 1:>{len(str(total))}}/{total}] {implementation:<{width}} "
+                  f"count={count:>7} ... ", end="", file=sys.stderr, flush=True)
             record = run_once(commands[implementation], {
                 "MVP_COUNT": str(count), "MVP_WARMUP": str(args.warmup),
                 "MVP_MEASURE": str(args.measure), "MVP_OUT": str(record_path),
-            }, record_path, timeout)
-            runs.append({"implementation": implementation, "count": count,
-                         **stats.summarize(record["intervals_ms"])})
+            }, record_path, logs / f"{name}.log", timeout)
+            run = {"implementation": implementation, "count": count,
+                   **stats.summarize(record["intervals_ms"])}
+            runs.append(run)
+            print(f"{run['fps']:5.1f} fps (p95 {run['p95_ms']:.1f} ms)", file=sys.stderr)
 
     summary = {
         "case": case.name,
@@ -149,11 +175,59 @@ def main() -> None:
         "runs": runs,
     }
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
-    print(table(summary, counts, implementations))
-    print(f"\n結果: {out}", file=sys.stderr)
+    (out / "summary.md").write_text(markdown_table(summary, counts, implementations) + "\n")
+    print(file=sys.stderr)
+    print(terminal_table(summary, counts, implementations))
+    print(f"\n結果: {out}\n貼り付け用の表: {out / 'summary.md'}", file=sys.stderr)
 
 
-def table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
+def conditions(summary: Dict) -> str:
+    """表に必ず添える条件の 1 行 (AGENTS.md「載せ方」)。"""
+    versions = summary["versions"]
+    m = summary["machine"]
+    return (f"{m['chip']} ({m['model']}) / macOS {m['macos']} / mokume {versions['mokume']} / "
+            f"Processing {versions['processing']} / warmup {summary['warmup_s']} s, "
+            f"measure {summary['measure_s']} s")
+
+
+def ratio_applies(implementations: List[str]) -> bool:
+    return set(IMPLEMENTATIONS) <= set(implementations)
+
+
+def terminal_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
+    """端末で読む表。両側の fps と分位を並べ、両側を回したときは fps の比 (mokume ÷ processing) を足す。"""
+    by_key = {(r["implementation"], r["count"]): r for r in summary["runs"]}
+    metrics = ("fps", "p50_ms", "p95_ms", "p99_ms")
+    header = [f"{'count':>7}"]
+    subheader = [" " * 7]
+    for implementation in implementations:
+        group = " ".join(f"{m.removesuffix('_ms'):>6}" for m in metrics)
+        header.append(f"{implementation:^{len(group)}}")
+        subheader.append(group)
+    if ratio_applies(implementations):
+        header.append(f"{'ratio':>7}")
+        subheader.append(f"{'m / p':>7}")
+    rows = []
+    for count in counts:
+        cells = [f"{count:>7}"]
+        for implementation in implementations:
+            r = by_key[(implementation, count)]
+            cells.append(" ".join(f"{r[m]:>6.1f}" for m in metrics))
+        if ratio_applies(implementations):
+            ratio = by_key[("mokume", count)]["fps"] / by_key[("processing", count)]["fps"]
+            cells.append(f"{ratio:>6.2f}x")
+        rows.append(cells)
+    widths = [len(c) for c in header]
+    rule = "-+-".join("-" * w for w in widths)
+    lines = [f"{summary['case']} — fps は多いほど、p50 / p95 / p99 (フレーム間隔 ms) は少ないほどよい",
+             "", " | ".join(header).rstrip(), " | ".join(subheader), rule]
+    lines += [" | ".join(cells) for cells in rows]
+    lines += ["", conditions(summary)]
+    return "\n".join(lines)
+
+
+def markdown_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
+    """事例の README に貼る表。"""
     by_key = {(r["implementation"], r["count"]): r for r in summary["runs"]}
     lines = ["| count | " + " | ".join(f"{i} fps (p95 ms)" for i in implementations) + " |",
              "| ---: | " + " | ".join("---:" for _ in implementations) + " |"]
@@ -163,11 +237,8 @@ def table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
             r = by_key[(implementation, count)]
             cells.append(f"{r['fps']:.1f} ({r['p95_ms']:.1f})")
         lines.append(f"| {count} | " + " | ".join(cells) + " |")
-    versions = summary["versions"]
-    m = summary["machine"]
     lines.append("")
-    lines.append(f"{m['chip']} ({m['model']}) / macOS {m['macos']} / mokume {versions['mokume']} / "
-                 f"Processing {versions['processing']} / warmup {summary['warmup_s']} s, measure {summary['measure_s']} s")
+    lines.append(conditions(summary))
     return "\n".join(lines)
 
 
