@@ -105,7 +105,9 @@ class TableTests(unittest.TestCase):
         summary = fake_summary(run.IMPLEMENTATIONS, counts, repeat=3)
         sides = list(run.IMPLEMENTATIONS)
         self.assertIn("58.0–60.0", run.terminal_table(summary, counts, sides))
-        self.assertIn("| 59.0 [58.0–60.0] (17.0) |", run.markdown_table(summary, counts, sides))
+        table = run.markdown_table(summary, counts, sides)
+        self.assertIn("| 59.0 [58.0–60.0] (17.0) |", table)
+        self.assertIn("mokume fps [最小–最大] (p95 ms)", table)
 
     def test_single_repeat_has_no_spread(self):
         counts = [1000]

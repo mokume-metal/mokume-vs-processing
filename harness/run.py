@@ -269,7 +269,8 @@ def terminal_table(summary: Dict, counts: List[int], implementations: List[str])
 def markdown_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
     """事例の README に貼る表。fps は回の中央値と [最小–最大]、括弧は p95 の中央値。"""
     table = by_key(summary)
-    lines = ["| count | " + " | ".join(f"{i} fps (p95 ms)" for i in implementations) + " |",
+    head = "fps [最小–最大] (p95 ms)" if summary["repeat"] > 1 else "fps (p95 ms)"
+    lines = ["| count | " + " | ".join(f"{i} {head}" for i in implementations) + " |",
              "| ---: | " + " | ".join("---:" for _ in implementations) + " |"]
     for count in counts:
         cells = []
