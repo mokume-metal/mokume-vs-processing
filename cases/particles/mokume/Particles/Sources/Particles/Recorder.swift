@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: 2026 mokume-metal
 // SPDX-License-Identifier: MIT
 
+import AppKit
 import Foundation
 
 /// ハーネスとの取り決め (harness/README.md「スケッチとの取り決め」) の mokume 側。
@@ -19,7 +20,14 @@ final class Recorder {
     private var intervals: [Double] = []
     private var finished = false
 
-    init(implementation: String, environment: [String: String] = ProcessInfo.processInfo.environment) {
+    /// 窓の中身を何点に広げるか。描く大きさ (`SketchSettings` の幅と高さ) を渡す。
+    private let windowSize: NSSize
+
+    init(
+        implementation: String, windowWidth: Int, windowHeight: Int,
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) {
+        windowSize = NSSize(width: windowWidth, height: windowHeight)
         self.implementation = implementation
         count = environment["MVP_COUNT"].flatMap(Int.init) ?? 10_000
         warmup = environment["MVP_WARMUP"].flatMap(Double.init) ?? 2
@@ -33,6 +41,7 @@ final class Recorder {
         guard !finished else { return }
         let now = DispatchTime.now().uptimeNanoseconds
         guard let start else {
+            matchWindowSize()
             self.start = now
             last = now
             return
@@ -41,6 +50,21 @@ final class Recorder {
         if elapsed >= warmup, let last { intervals.append(Double(now - last) / 1e6) }
         last = now
         if elapsed >= warmup + measure { finish() }
+    }
+
+    /// 窓の中身を、描く大きさと同じ点に広げる。
+    ///
+    /// mokume は窓を描く解像度の**半分の点**で開き、大きさを選ぶ口が無い
+    /// ([mokume#1624](https://github.com/mokume-metal/mokume/issues/1624))。Processing の
+    /// `size(1280, 720)` は 1280×720 点で開くので、そのままでは窓の見た目と画面へ出す画素数が
+    /// 片側だけ違う。描く解像度は変えず、窓だけを Processing と同じ大きさにする。
+    /// 最初の tick は暖機の中なので、広げた後の揺れは計測に入らない。口ができたらここを外す。
+    private func matchWindowSize() {
+        for window in NSApp.windows where window.styleMask.contains(.titled) {
+            window.setContentSize(windowSize)
+            // 左下を起点に広がるので、そのままだと画面の上へはみ出すことがある
+            window.center()
+        }
     }
 
     private func finish() {

@@ -24,6 +24,8 @@ SPDX-License-Identifier: MIT
 | `MVP_MEASURE` | 測る秒数 | 5 |
 | `MVP_OUT` | 記録を書くファイル。無ければ標準出力 | — |
 
+- 最初の `tick()` で、窓の中身を描く大きさと同じ点に揃える (ADR-0001 決定 3「窓の大きさ」)。
+  既定でそうなる側 (Processing) は何もしない
 - `draw()` の頭で時刻を取り、最初の呼び出しからの経過が `MVP_WARMUP` を越えた後の間隔 (ms) を集める
 - 経過が `MVP_WARMUP + MVP_MEASURE` を越えたら、次の JSON を書いて終了する
 

@@ -10,7 +10,8 @@ final class Particles: Sketch {
     var settings = SketchSettings(
         width: 1280, height: 720, frameRate: 60, title: "particles — mokume", pixelDensity: 1)
 
-    let recorder = Recorder(implementation: "mokume")
+    lazy var recorder = Recorder(
+        implementation: "mokume", windowWidth: settings.width, windowHeight: settings.height)
     var xs: [Float] = []
     var ys: [Float] = []
     var vxs: [Float] = []
