@@ -43,24 +43,78 @@ class SummarizeTests(unittest.TestCase):
             stats.summarize([])
 
 
-def fake_summary(implementations, counts):
-    runs = [{"implementation": i, "count": c, "frames": 300, "fps": 60.0 if i == "mokume" else 30.0,
+class AggregateTests(unittest.TestCase):
+    @staticmethod
+    def run_with(fps, p95=17.0):
+        return {"fps": fps, "p50_ms": 16.7, "p95_ms": p95, "p99_ms": 20.0}
+
+    def test_center_is_median_and_spread_is_min_max(self):
+        # 1 回だけ大きく外れた回 (30 fps) があっても、中心は中央値なので引きずられない
+        a = stats.aggregate([self.run_with(60.0, 16.8), self.run_with(30.0, 40.0), self.run_with(59.0, 17.2)])
+        self.assertEqual(a["repeats"], 3)
+        self.assertEqual(a["fps"], 59.0)
+        self.assertEqual((a["fps_min"], a["fps_max"]), (30.0, 60.0))
+        self.assertEqual(a["p95_ms"], 17.2)
+
+    def test_rejects_empty(self):
+        with self.assertRaises(ValueError):
+            stats.aggregate([])
+
+
+class OrderTests(unittest.TestCase):
+    def test_first_side_alternates_between_repeats(self):
+        sides = list(run.IMPLEMENTATIONS)
+        firsts = [run.order(sides, r)[0] for r in range(4)]
+        self.assertEqual(firsts, [sides[0], sides[1], sides[0], sides[1]])
+
+    def test_aggregates_group_repeats_of_the_same_step(self):
+        runs = [{"implementation": i, "count": c, "repeat": r, "fps": f, "p50_ms": 1.0, "p95_ms": 1.0,
+                 "p99_ms": 1.0}
+                for r, f in ((1, 50.0), (2, 60.0)) for c in (1000, 2000) for i in ("mokume", "processing")]
+        grouped = run.aggregates(runs)
+        self.assertEqual(len(grouped), 4)
+        self.assertTrue(all(a["repeats"] == 2 and a["fps"] == 55.0 for a in grouped))
+
+
+def fake_summary(implementations, counts, repeat=1):
+    runs = [{"implementation": i, "count": c, "repeat": r + 1, "frames": 300,
+             "fps": (60.0 if i == "mokume" else 30.0) - r,
              "mean_ms": 16.7, "p50_ms": 16.7, "p95_ms": 17.0, "p99_ms": 120.5}
-            for c in counts for i in implementations]
+            for r in range(repeat) for c in counts for i in implementations]
     return {"case": "demo", "machine": {"model": "Mac17,2", "chip": "Apple M5", "macos": "26.6"},
             "versions": {"mokume": "0.11.2", "processing": "4.5.2"}, "warmup_s": 2, "measure_s": 5,
-            "runs": runs}
+            "repeat": repeat, "runs": runs, "aggregates": run.aggregates(runs)}
 
 
 class TableTests(unittest.TestCase):
     def test_terminal_table_columns_line_up(self):
         counts = [1000, 100000]
-        text = run.terminal_table(fake_summary(run.IMPLEMENTATIONS, counts), counts, list(run.IMPLEMENTATIONS))
-        rows = [line for line in text.splitlines() if "|" in line and "-+-" not in line]
-        # 見出し・小見出し・各段で、区切りの位置が揃っている
-        positions = {tuple(i for i, ch in enumerate(line) if ch == "|") for line in rows}
-        self.assertEqual(len(positions), 1)
-        self.assertEqual(len(rows), 2 + len(counts))
+        for repeat in (1, 3):
+            with self.subTest(repeat=repeat):
+                text = run.terminal_table(fake_summary(run.IMPLEMENTATIONS, counts, repeat), counts,
+                                          list(run.IMPLEMENTATIONS))
+                rows = [line for line in text.splitlines() if "|" in line and "-+-" not in line]
+                # 見出し・小見出し・各段で、区切りの位置が揃っている
+                positions = {tuple(i for i, ch in enumerate(line) if ch == "|") for line in rows}
+                self.assertEqual(len(positions), 1)
+                self.assertEqual(len(rows), 2 + len(counts))
+
+    def test_repeated_tables_show_the_spread(self):
+        # 3 回の fps が 60, 59, 58 なら、中央値 59.0 と最小〜最大 58.0–60.0 を出す
+        counts = [1000]
+        summary = fake_summary(run.IMPLEMENTATIONS, counts, repeat=3)
+        sides = list(run.IMPLEMENTATIONS)
+        self.assertIn("58.0–60.0", run.terminal_table(summary, counts, sides))
+        table = run.markdown_table(summary, counts, sides)
+        self.assertIn("| 59.0 [58.0–60.0] (17.0) |", table)
+        self.assertIn("mokume fps [最小–最大] (p95 ms)", table)
+
+    def test_single_repeat_has_no_spread(self):
+        counts = [1000]
+        summary = fake_summary(run.IMPLEMENTATIONS, counts, repeat=1)
+        sides = list(run.IMPLEMENTATIONS)
+        self.assertNotIn("min–max", run.terminal_table(summary, counts, sides))
+        self.assertIn("| 60.0 (17.0) |", run.markdown_table(summary, counts, sides))
 
     def test_ratio_is_mokume_over_processing(self):
         counts = [1000]
@@ -79,6 +133,7 @@ class TableTests(unittest.TestCase):
             last = table(summary, counts, list(run.IMPLEMENTATIONS)).splitlines()[-1]
             self.assertEqual(last, run.conditions(summary))
             self.assertIn("mokume 0.11.2", last)
+            self.assertIn("repeat 1", last)
 
 
 class CaseLayoutTests(unittest.TestCase):

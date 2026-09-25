@@ -3,15 +3,17 @@
 """1 事例を、粒子数などの負荷を段階的に上げながら両側で回し、フレーム間隔を集める。
 
     python3 harness/run.py particles
-    python3 harness/run.py particles --counts 1000,20000 --impl mokume --measure 3
+    python3 harness/run.py particles --counts 1000,20000 --impl mokume --measure 3 --repeat 1
 
 - mokume 側は `swift build -c release` した実行ファイルを直に起こす (`mokume run` を介さない —
   debug で回すと数字が別物になる。版の正本は Package.resolved)
 - Processing 側は Processing.app の `cli --run` で起こす。場所は `MVP_PROCESSING` で変えられる
 - どちらも窓を出す。**計測中は他の窓を前に出さない** (背面に回ると描画の頻度が落ちる)
+- 全段を `--repeat` 回掃く。段ごとに両側を続けて回し、**回ごとに先に回す側を入れ替える**
+  (片側だけが温まった・冷えた状態で測らない)。表は回の中央値と、fps の最小〜最大を出す
 
-結果は `results/<事例>-<時刻>/` に置く (gitignore 済み): 生の記録 1 回ぶんずつ・`summary.json`・
-貼り付け用の Markdown の表 `summary.md`・子プロセスの出力 `logs/`。
+結果は `results/<事例>-<時刻>/` に置く (gitignore 済み): 生の記録 1 回ぶんずつ・`summary.json` (1 回ずつの
+`runs` と、段ごとにまとめた `aggregates`)・貼り付け用の Markdown の表 `summary.md`・子プロセスの出力 `logs/`。
 
 端末には、途中は 1 回ごとの進み具合を 1 行ずつ (stderr)、最後に両側を並べた表を stdout に出す。
 子プロセスの出力は `logs/` へ逃がし、失敗したときだけ末尾を端末に出す。
@@ -113,6 +115,20 @@ def run_once(command: List[str], env: Dict[str, str], output: Path, log: Path,
     return json.loads(output.read_text())
 
 
+def order(implementations: List[str], repeat: int) -> List[str]:
+    """その回に回す側の順。回ごとに入れ替え、どちらかが常に先 (冷えた機械) にならないようにする。"""
+    return list(reversed(implementations)) if repeat % 2 else list(implementations)
+
+
+def aggregates(runs: List[Dict]) -> List[Dict]:
+    """(側, 段) ごとに回をまとめる。並びは最初に現れた順。"""
+    grouped: Dict[tuple, List[Dict]] = {}
+    for r in runs:
+        grouped.setdefault((r["implementation"], r["count"]), []).append(r)
+    return [{"implementation": i, "count": c, **stats.aggregate(group)}
+            for (i, c), group in grouped.items()]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("case")
@@ -121,6 +137,7 @@ def main() -> None:
     parser.add_argument("--impl", default=",".join(IMPLEMENTATIONS), help="回す側。カンマ区切り")
     parser.add_argument("--warmup", type=float, default=2, help="捨てる秒数")
     parser.add_argument("--measure", type=float, default=5, help="測る秒数")
+    parser.add_argument("--repeat", type=int, default=3, help="全段を掃く回数 (ADR-0001 決定 3)")
     parser.add_argument("--out", type=Path, help="結果の置き場 (既定は results/<事例>-<時刻>)")
     args = parser.parse_args()
 
@@ -130,6 +147,8 @@ def main() -> None:
     unknown = set(implementations) - set(IMPLEMENTATIONS)
     if unknown:
         raise SystemExit(f"知らない側: {sorted(unknown)}")
+    if args.repeat < 1:
+        raise SystemExit("--repeat は 1 以上")
 
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     out = (args.out or cases.ROOT / "results" / f"{case.name}-{stamp}").resolve()
@@ -148,22 +167,23 @@ def main() -> None:
     # Processing の cli は毎回コンパイルから始めるので、その分の余裕を見る
     timeout = args.warmup + args.measure + 120
     runs = []
-    total = len(counts) * len(implementations)
+    total = args.repeat * len(counts) * len(implementations)
     width = max(len(i) for i in implementations)
-    for count in counts:
-        for implementation in implementations:
-            name = f"{implementation}-{count}"
-            record_path = out / f"{name}.json"
-            print(f"[{len(runs) + 1:>{len(str(total))}}/{total}] {implementation:<{width}} "
-                  f"count={count:>7} ... ", end="", file=sys.stderr, flush=True)
-            record = run_once(commands[implementation], {
-                "MVP_COUNT": str(count), "MVP_WARMUP": str(args.warmup),
-                "MVP_MEASURE": str(args.measure), "MVP_OUT": str(record_path),
-            }, record_path, logs / f"{name}.log", timeout)
-            run = {"implementation": implementation, "count": count,
-                   **stats.summarize(record["intervals_ms"])}
-            runs.append(run)
-            print(f"{run['fps']:5.1f} fps (p95 {run['p95_ms']:.1f} ms)", file=sys.stderr)
+    for repeat in range(args.repeat):
+        for count in counts:
+            for implementation in order(implementations, repeat):
+                name = f"{implementation}-{count}-r{repeat + 1}"
+                record_path = out / f"{name}.json"
+                print(f"[{len(runs) + 1:>{len(str(total))}}/{total}] r{repeat + 1} {implementation:<{width}} "
+                      f"count={count:>7} ... ", end="", file=sys.stderr, flush=True)
+                record = run_once(commands[implementation], {
+                    "MVP_COUNT": str(count), "MVP_WARMUP": str(args.warmup),
+                    "MVP_MEASURE": str(args.measure), "MVP_OUT": str(record_path),
+                }, record_path, logs / f"{name}.log", timeout)
+                run = {"implementation": implementation, "count": count, "repeat": repeat + 1,
+                       **stats.summarize(record["intervals_ms"])}
+                runs.append(run)
+                print(f"{run['fps']:5.1f} fps (p95 {run['p95_ms']:.1f} ms)", file=sys.stderr)
 
     summary = {
         "case": case.name,
@@ -172,7 +192,9 @@ def main() -> None:
         "versions": {"mokume": mokume_version(case.mokume), "processing": processing_version(processing)},
         "warmup_s": args.warmup,
         "measure_s": args.measure,
+        "repeat": args.repeat,
         "runs": runs,
+        "aggregates": aggregates(runs),
     }
     (out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
     (out / "summary.md").write_text(markdown_table(summary, counts, implementations) + "\n")
@@ -187,21 +209,35 @@ def conditions(summary: Dict) -> str:
     m = summary["machine"]
     return (f"{m['chip']} ({m['model']}) / macOS {m['macos']} / mokume {versions['mokume']} / "
             f"Processing {versions['processing']} / warmup {summary['warmup_s']} s, "
-            f"measure {summary['measure_s']} s")
+            f"measure {summary['measure_s']} s, repeat {summary['repeat']}")
 
 
 def ratio_applies(implementations: List[str]) -> bool:
     return set(IMPLEMENTATIONS) <= set(implementations)
 
 
+def by_key(summary: Dict) -> Dict[tuple, Dict]:
+    return {(a["implementation"], a["count"]): a for a in summary["aggregates"]}
+
+
+def fps_range(a: Dict) -> str:
+    """回ごとの fps の最小〜最大。1 回だけなら範囲は無い。"""
+    return f"{a['fps_min']:.1f}–{a['fps_max']:.1f}" if a["repeats"] > 1 else ""
+
+
 def terminal_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
-    """端末で読む表。両側の fps と分位を並べ、両側を回したときは fps の比 (mokume ÷ processing) を足す。"""
-    by_key = {(r["implementation"], r["count"]): r for r in summary["runs"]}
+    """端末で読む表。両側の fps と分位 (回の中央値) を並べ、繰り返したときは fps の最小〜最大を、
+    両側を回したときは fps の比 (mokume ÷ processing) を足す。"""
+    table = by_key(summary)
     metrics = ("fps", "p50_ms", "p95_ms", "p99_ms")
+    ranged = summary["repeat"] > 1
     header = [f"{'count':>7}"]
     subheader = [" " * 7]
     for implementation in implementations:
-        group = " ".join(f"{m.removesuffix('_ms'):>6}" for m in metrics)
+        names = [f"{m.removesuffix('_ms'):>6}" for m in metrics]
+        if ranged:
+            names.insert(1, f"{'min–max':>11}")
+        group = " ".join(names)
         header.append(f"{implementation:^{len(group)}}")
         subheader.append(group)
     if ratio_applies(implementations):
@@ -211,15 +247,19 @@ def terminal_table(summary: Dict, counts: List[int], implementations: List[str])
     for count in counts:
         cells = [f"{count:>7}"]
         for implementation in implementations:
-            r = by_key[(implementation, count)]
-            cells.append(" ".join(f"{r[m]:>6.1f}" for m in metrics))
+            a = table[(implementation, count)]
+            values = [f"{a[m]:>6.1f}" for m in metrics]
+            if ranged:
+                values.insert(1, f"{fps_range(a):>11}")
+            cells.append(" ".join(values))
         if ratio_applies(implementations):
-            ratio = by_key[("mokume", count)]["fps"] / by_key[("processing", count)]["fps"]
+            ratio = table[("mokume", count)]["fps"] / table[("processing", count)]["fps"]
             cells.append(f"{ratio:>6.2f}x")
         rows.append(cells)
     widths = [len(c) for c in header]
     rule = "-+-".join("-" * w for w in widths)
-    lines = [f"{summary['case']} — fps は多いほど、p50 / p95 / p99 (フレーム間隔 ms) は少ないほどよい",
+    lines = [f"{summary['case']} — fps は多いほど、p50 / p95 / p99 (フレーム間隔 ms) は少ないほどよい"
+             f" (値は {summary['repeat']} 回の中央値)",
              "", " | ".join(header).rstrip(), " | ".join(subheader), rule]
     lines += [" | ".join(cells) for cells in rows]
     lines += ["", conditions(summary)]
@@ -227,15 +267,17 @@ def terminal_table(summary: Dict, counts: List[int], implementations: List[str])
 
 
 def markdown_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
-    """事例の README に貼る表。"""
-    by_key = {(r["implementation"], r["count"]): r for r in summary["runs"]}
-    lines = ["| count | " + " | ".join(f"{i} fps (p95 ms)" for i in implementations) + " |",
+    """事例の README に貼る表。fps は回の中央値と [最小–最大]、括弧は p95 の中央値。"""
+    table = by_key(summary)
+    head = "fps [最小–最大] (p95 ms)" if summary["repeat"] > 1 else "fps (p95 ms)"
+    lines = ["| count | " + " | ".join(f"{i} {head}" for i in implementations) + " |",
              "| ---: | " + " | ".join("---:" for _ in implementations) + " |"]
     for count in counts:
         cells = []
         for implementation in implementations:
-            r = by_key[(implementation, count)]
-            cells.append(f"{r['fps']:.1f} ({r['p95_ms']:.1f})")
+            a = table[(implementation, count)]
+            spread = f" [{fps_range(a)}]" if a["repeats"] > 1 else ""
+            cells.append(f"{a['fps']:.1f}{spread} ({a['p95_ms']:.1f})")
         lines.append(f"| {count} | " + " | ".join(cells) + " |")
     lines.append("")
     lines.append(conditions(summary))

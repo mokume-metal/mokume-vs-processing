@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Sequence
+import statistics
+from typing import Dict, Mapping, Sequence
 
 
 def percentile(values: Sequence[float], q: float) -> float:
@@ -31,4 +32,23 @@ def summarize(intervals_ms: Sequence[float]) -> Dict[str, float]:
         "p50_ms": percentile(intervals_ms, 50),
         "p95_ms": percentile(intervals_ms, 95),
         "p99_ms": percentile(intervals_ms, 99),
+    }
+
+
+def aggregate(runs: Sequence[Mapping[str, float]]) -> Dict[str, float]:
+    """同じ段を繰り返した回 (`summarize` の結果) をまとめる。
+
+    中心は中央値 (1 回だけ外れた回に引きずられない)、ばらつきは回ごとの fps の最小と最大で示す。
+    """
+    if not runs:
+        raise ValueError("回が 1 つも無い")
+    fps = [r["fps"] for r in runs]
+    return {
+        "repeats": len(runs),
+        "fps": statistics.median(fps),
+        "fps_min": min(fps),
+        "fps_max": max(fps),
+        "p50_ms": statistics.median(r["p50_ms"] for r in runs),
+        "p95_ms": statistics.median(r["p95_ms"] for r in runs),
+        "p99_ms": statistics.median(r["p99_ms"] for r in runs),
     }
