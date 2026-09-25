@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+
+# mokume 側のビルド
+.build/
+.swiftpm/
+
+# 計測の生の記録 (ADR-0001 決定 5)。README に載せるのは要約の表だけ
+results/
+
+__pycache__/
+.DS_Store
+
+# 秘密情報の置き場。追跡しない
+.env
+.env.*

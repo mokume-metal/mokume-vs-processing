@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+
+# **CI の緑は「数字が正しい」を意味しない。** 計測は窓と GPU が要り、GitHub の runner では
+# 回らない。ここが見るのは並びとハーネスと帰属の宣言 (make ci-check) と、PR タイトルだけである。
+name: CI
+
+on:
+  pull_request:
+    # タイトルを直したときも検査し直す
+    types: [opened, synchronize, reopened, edited]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.9"
+      - run: pip install reuse
+      - run: make ci-check
+
+  pr-title:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PR_TITLE: ${{ github.event.pull_request.title }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # squash merge では PR タイトルがそのまま main のコミットの要約になる
+      - name: PR タイトルが Conventional Commits の形か
+        run: ./scripts/check-pr-title.sh

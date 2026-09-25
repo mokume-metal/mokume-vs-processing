@@ -1,0 +1,22 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+name: 事例の提案
+description: 比べたい題材 (Processing でよく書かれるもの)
+type: Feature
+body:
+  - type: textarea
+    id: subject
+    attributes:
+      label: 何を描くか
+      description: Processing 側でどう書くかの見当まで書けると着手しやすい
+    validations:
+      required: true
+  - type: textarea
+    id: load
+    attributes:
+      label: 何が負荷になるか
+      description: MVP_COUNT を何の数にするか (粒子の数・線の本数・画素の数など)
+  - type: markdown
+    attributes:
+      value: |
+        **mokume 自身の不具合は、ここではなく [mokume](https://github.com/mokume-metal/mokume/issues) へ起票する。**

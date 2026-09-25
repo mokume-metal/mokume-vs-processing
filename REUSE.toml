@@ -1,0 +1,13 @@
+# REUSE (https://reuse.software) の帰属宣言。形は mokume 本体の REUSE.toml に揃える
+# (mokume ADR-0026 決定 1 の第 1 段): 原則は各ファイルの SPDX ヘッダで宣言し、ヘッダを
+# 持てないファイルだけをここに列挙する。添えファイル (`.license`) は使わない。
+#
+# ルートの LICENSE は GitHub の表示のための写しで、正典は LICENSES/MIT.txt。
+# 著作権年や holder を変えるときは両方を同時に変える。
+
+version = 1
+
+[[annotations]]
+path = ["cases/*/mokume/*/Package.resolved"]
+SPDX-FileCopyrightText = "2026 mokume-metal"
+SPDX-License-Identifier = "MIT"

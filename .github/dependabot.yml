@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: 2026 mokume-metal
+# SPDX-License-Identifier: MIT
+
+# workflow が使う GitHub Actions の版を週次で見張る。
+#
+# **mokume は見張らない。** 版を上げると全事例を測り直して表を貼り替える必要があり、
+# Package.swift の exact を手で上げる PR でその作業をまとめて行う。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    # 取り下げられる悪意あるリリースを避ける猶予。security update には効かない
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: build
