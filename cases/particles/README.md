@@ -19,6 +19,14 @@ creative coding で最もよく書かれる形の 1 つで、**1 フレームに
 GPU の粒子系) があるが、ここでは使わない。「Processing と同じコードを書いたときにどうなるか」を
 先に押さえ、mokume らしい書き方は別の事例として足す。
 
+### 揃えられない差
+
+- **窓の大きさ。** Processing は `size(1280, 720)` で窓を 1280 × 720 点で開くが、mokume は
+  描く解像度の半分の点で開き、大きさを選ぶ口が無い
+  ([mokume#1624](https://github.com/mokume-metal/mokume/issues/1624))。mokume 側の
+  `Recorder.swift` が最初のフレーム (暖機の中) で窓を 1280 × 720 点に広げて揃えている。
+  両側とも 1280 × 720 px で描き、Retina では 2 倍に拡大して出す
+
 ## 回す
 
 ```bash
