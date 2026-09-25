@@ -41,6 +41,10 @@ python3 harness/run.py particles                 # 両側を負荷の段ごと�
 mokume run -c release cases/particles/mokume/Particles   # mokume 側を窓で見るだけ
 ```
 
+途中は 1 回ごとの fps を 1 行ずつ出し、終わると両側を並べた表 (fps と フレーム間隔の p50 / p95 / p99、
+fps の比) を出す。事例の README に貼る Markdown の表は `results/<事例>-<時刻>/summary.md` に、
+子プロセスの出力は同じ場所の `logs/` に残る。
+
 計測中は両側の窓が順に開く。**他の窓を前に出さない** — 背面に回った窓は描画の頻度が落ちる。
 
 ## ライセンス

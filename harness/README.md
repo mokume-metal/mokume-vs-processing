@@ -9,7 +9,7 @@ SPDX-License-Identifier: MIT
 
 | | |
 | --- | --- |
-| [`run.py`](run.py) | 負荷の段ごとに両側を起こし、記録を集めて表にする |
+| [`run.py`](run.py) | 負荷の段ごとに両側を起こし、記録を集めて表にする (端末用の表と、貼り付け用の `summary.md`) |
 | [`stats.py`](stats.py) | 間隔の列の要約 (fps・分位) |
 | [`cases.py`](cases.py) | 事例の並びを読む・欠けを見つける |
 
