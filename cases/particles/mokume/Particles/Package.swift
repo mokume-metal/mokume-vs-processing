@@ -12,7 +12,7 @@ let package = Package(
     products: [.executable(name: "Particles", targets: ["Particles"])],
     dependencies: [
         // **どの版で測ったかは Package.resolved が持つ。** 結果にはこの版が刻まれる
-        .package(url: "https://github.com/mokume-metal/mokume.git", exact: "0.11.2")
+        .package(url: "https://github.com/mokume-metal/mokume.git", exact: "0.25.0")
     ],
     targets: [
         .executableTarget(

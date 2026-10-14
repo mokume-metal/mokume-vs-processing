@@ -9,6 +9,17 @@ import statistics
 from typing import Dict, Mapping, Sequence
 
 
+# 60 fps を保てたと見なす p95 の上限 (ms)。1 フレームの 16.67 ms にスケジューラの揺れを少し許す。
+# mokume は表示の同期に 60 fps で固定されていて上限を外せないので、「何 fps 出たか」ではなく
+# 「60 fps の枠に収まったか」で両側を同じ物差しにする (ADR-0001 決定 1)。
+HOLD_P95_MS = 17.5
+
+
+def holds_target(aggregate: Mapping[str, float]) -> bool:
+    """回ごとの p95 の中央値が `HOLD_P95_MS` 以内なら、60 fps を保てた段とする。"""
+    return aggregate["p95_ms"] <= HOLD_P95_MS
+
+
 def percentile(values: Sequence[float], q: float) -> float:
     """最近順位法 (nearest-rank) の分位。補間しないので、報告する値は実際に観測した間隔のどれかになる。"""
     if not values:
