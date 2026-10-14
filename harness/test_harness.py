@@ -79,7 +79,7 @@ class OrderTests(unittest.TestCase):
 def fake_summary(implementations, counts, repeat=1):
     runs = [{"implementation": i, "count": c, "repeat": r + 1, "frames": 300,
              "fps": (60.0 if i == "mokume" else 30.0) - r,
-             "mean_ms": 16.7, "p50_ms": 16.7, "p95_ms": 17.0, "p99_ms": 120.5}
+             "mean_ms": 16.7, "p50_ms": 16.7, "p95_ms": 17.0 if i == "mokume" else 40.0, "p99_ms": 120.5}
             for r in range(repeat) for c in counts for i in implementations]
     return {"case": "demo", "machine": {"model": "Mac17,2", "chip": "Apple M5", "macos": "26.6"},
             "versions": {"mokume": "0.25.0", "processing": "4.5.2"}, "warmup_s": 2, "measure_s": 5,
@@ -106,25 +106,36 @@ class TableTests(unittest.TestCase):
         sides = list(run.IMPLEMENTATIONS)
         self.assertIn("58.0–60.0", run.terminal_table(summary, counts, sides))
         table = run.markdown_table(summary, counts, sides)
-        self.assertIn("| 59.0 [58.0–60.0] (17.0) |", table)
-        self.assertIn("mokume fps [最小–最大] (p95 ms)", table)
+        self.assertIn("| 59.0 [58.0–60.0] (17.0) ✓ |", table)
+        self.assertIn("mokume fps [最小–最大] (p95 ms) 60 保持", table)
 
     def test_single_repeat_has_no_spread(self):
         counts = [1000]
         summary = fake_summary(run.IMPLEMENTATIONS, counts, repeat=1)
         sides = list(run.IMPLEMENTATIONS)
         self.assertNotIn("min–max", run.terminal_table(summary, counts, sides))
-        self.assertIn("| 60.0 (17.0) |", run.markdown_table(summary, counts, sides))
+        self.assertIn("| 60.0 (17.0) ✓ |", run.markdown_table(summary, counts, sides))
 
-    def test_ratio_is_mokume_over_processing(self):
-        counts = [1000]
-        text = run.terminal_table(fake_summary(run.IMPLEMENTATIONS, counts), counts, list(run.IMPLEMENTATIONS))
-        self.assertIn("2.00x", text)
+    def test_hold_mark_and_largest_held_load(self):
+        # 同じ p95 でも 17.5 ms を越えた側は ✗。途中で落ちたら、その先の段が緑でも保てたとは数えない
+        counts = [1000, 100000]
+        summary = fake_summary(run.IMPLEMENTATIONS, counts)
+        text = run.terminal_table(summary, counts, list(run.IMPLEMENTATIONS))
+        self.assertIn("mokume 100000 / processing 保てた段なし", text)
+        rows = [line for line in text.splitlines() if line.lstrip().startswith(("1000 ", "100000 "))]
+        self.assertEqual("".join(rows).count("✓"), 2)
+        self.assertEqual("".join(rows).count("✗"), 2)
 
-    def test_single_side_has_no_ratio(self):
-        counts = [1000]
-        text = run.terminal_table(fake_summary(["processing"], counts), counts, ["processing"])
-        self.assertNotIn("ratio", text)
+    def test_last_held_stops_at_first_miss(self):
+        counts = [1, 2, 3]
+        runs = [{"implementation": "mokume", "count": c, "repeat": 1, "fps": 60.0, "p50_ms": 16.7,
+                 "p95_ms": p, "p99_ms": p} for c, p in ((1, 16.7), (2, 30.0), (3, 16.7))]
+        summary = {"aggregates": run.aggregates(runs)}
+        self.assertEqual(run.last_held(summary, counts, "mokume"), 1)
+
+    def test_threshold_is_inclusive(self):
+        self.assertTrue(stats.holds_target({"p95_ms": stats.HOLD_P95_MS}))
+        self.assertFalse(stats.holds_target({"p95_ms": stats.HOLD_P95_MS + 0.1}))
 
     def test_both_tables_carry_the_conditions_line(self):
         counts = [1000]

@@ -15,7 +15,9 @@ void settings() {
 }
 
 void setup() {
-  frameRate(60);
+  // 上限を外す。frameRate(60) は sleep で刻むため、軽い負荷でも約 53 fps にしか届かない。mokume は
+  // 表示の同期で 60 に固定され外せないので、両側を「60 fps の枠に収まったか」で比べる (ADR-0001 決定 1)
+  frameRate(1000);
   surface.setTitle("particles — processing");
   recorder = new Recorder("processing");
   randomSeed(1);

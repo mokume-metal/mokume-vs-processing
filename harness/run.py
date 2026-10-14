@@ -212,8 +212,31 @@ def conditions(summary: Dict) -> str:
             f"measure {summary['measure_s']} s, repeat {summary['repeat']}")
 
 
-def ratio_applies(implementations: List[str]) -> bool:
-    return set(IMPLEMENTATIONS) <= set(implementations)
+def mark(a: Dict) -> str:
+    return "✓" if stats.holds_target(a) else "✗"
+
+
+def last_held(summary: Dict, counts: List[int], implementation: str) -> Optional[int]:
+    """60 fps を保てた最大の負荷。連続して保てた段のうち最後のもの (途中で落ちたらそこで止める)。"""
+    table = by_key(summary)
+    held = None
+    for count in counts:
+        if not stats.holds_target(table[(implementation, count)]):
+            break
+        held = count
+    return held
+
+
+CAP_NOTE = ("fps の上限: mokume は表示の同期で 60 に固定 (外せない)、Processing は上限なし (frameRate(1000))。"
+            "だから fps の大小ではなく、60 fps を保てたか (✓) で比べる (ADR-0001 決定 1)")
+
+
+def held_line(summary: Dict, counts: List[int], implementations: List[str]) -> str:
+    parts = []
+    for implementation in implementations:
+        held = last_held(summary, counts, implementation)
+        parts.append(f"{implementation} {held if held is not None else '保てた段なし'}")
+    return f"60 fps を保てた最大の負荷 (p95 ≤ {stats.HOLD_P95_MS} ms): " + " / ".join(parts)
 
 
 def by_key(summary: Dict) -> Dict[tuple, Dict]:
@@ -226,35 +249,29 @@ def fps_range(a: Dict) -> str:
 
 
 def terminal_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
-    """端末で読む表。両側の fps と分位 (回の中央値) を並べ、繰り返したときは fps の最小〜最大を、
-    両側を回したときは fps の比 (mokume ÷ processing) を足す。"""
+    """端末で読む表。両側の fps と分位 (回の中央値) を並べ、繰り返したときは fps の最小〜最大を足す。
+    末尾の列 `60` は 60 fps を保てたか (✓ / ✗)。"""
     table = by_key(summary)
     metrics = ("fps", "p50_ms", "p95_ms", "p99_ms")
     ranged = summary["repeat"] > 1
     header = [f"{'count':>7}"]
     subheader = [" " * 7]
     for implementation in implementations:
-        names = [f"{m.removesuffix('_ms'):>6}" for m in metrics]
+        names = [f"{m.removesuffix('_ms'):>6}" for m in metrics] + ["60"]
         if ranged:
             names.insert(1, f"{'min–max':>11}")
         group = " ".join(names)
         header.append(f"{implementation:^{len(group)}}")
         subheader.append(group)
-    if ratio_applies(implementations):
-        header.append(f"{'ratio':>7}")
-        subheader.append(f"{'m / p':>7}")
     rows = []
     for count in counts:
         cells = [f"{count:>7}"]
         for implementation in implementations:
             a = table[(implementation, count)]
-            values = [f"{a[m]:>6.1f}" for m in metrics]
+            values = [f"{a[m]:>6.1f}" for m in metrics] + [f"{mark(a):>2}"]
             if ranged:
                 values.insert(1, f"{fps_range(a):>11}")
             cells.append(" ".join(values))
-        if ratio_applies(implementations):
-            ratio = table[("mokume", count)]["fps"] / table[("processing", count)]["fps"]
-            cells.append(f"{ratio:>6.2f}x")
         rows.append(cells)
     widths = [len(c) for c in header]
     rule = "-+-".join("-" * w for w in widths)
@@ -262,14 +279,14 @@ def terminal_table(summary: Dict, counts: List[int], implementations: List[str])
              f" (値は {summary['repeat']} 回の中央値)",
              "", " | ".join(header).rstrip(), " | ".join(subheader), rule]
     lines += [" | ".join(cells) for cells in rows]
-    lines += ["", conditions(summary)]
+    lines += ["", held_line(summary, counts, implementations), CAP_NOTE, conditions(summary)]
     return "\n".join(lines)
 
 
 def markdown_table(summary: Dict, counts: List[int], implementations: List[str]) -> str:
-    """事例の README に貼る表。fps は回の中央値と [最小–最大]、括弧は p95 の中央値。"""
+    """事例の README に貼る表。fps は回の中央値と [最小–最大]、括弧は p95 の中央値、✓ は 60 fps を保てた段。"""
     table = by_key(summary)
-    head = "fps [最小–最大] (p95 ms)" if summary["repeat"] > 1 else "fps (p95 ms)"
+    head = "fps [最小–最大] (p95 ms) 60 保持" if summary["repeat"] > 1 else "fps (p95 ms) 60 保持"
     lines = ["| count | " + " | ".join(f"{i} {head}" for i in implementations) + " |",
              "| ---: | " + " | ".join("---:" for _ in implementations) + " |"]
     for count in counts:
@@ -277,8 +294,12 @@ def markdown_table(summary: Dict, counts: List[int], implementations: List[str])
         for implementation in implementations:
             a = table[(implementation, count)]
             spread = f" [{fps_range(a)}]" if a["repeats"] > 1 else ""
-            cells.append(f"{a['fps']:.1f}{spread} ({a['p95_ms']:.1f})")
+            cells.append(f"{a['fps']:.1f}{spread} ({a['p95_ms']:.1f}) {mark(a)}")
         lines.append(f"| {count} | " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(held_line(summary, counts, implementations))
+    lines.append("")
+    lines.append(CAP_NOTE)
     lines.append("")
     lines.append(conditions(summary))
     return "\n".join(lines)
