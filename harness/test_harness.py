@@ -82,7 +82,7 @@ def fake_summary(implementations, counts, repeat=1):
              "mean_ms": 16.7, "p50_ms": 16.7, "p95_ms": 17.0, "p99_ms": 120.5}
             for r in range(repeat) for c in counts for i in implementations]
     return {"case": "demo", "machine": {"model": "Mac17,2", "chip": "Apple M5", "macos": "26.6"},
-            "versions": {"mokume": "0.11.2", "processing": "4.5.2"}, "warmup_s": 2, "measure_s": 5,
+            "versions": {"mokume": "0.25.0", "processing": "4.5.2"}, "warmup_s": 2, "measure_s": 5,
             "repeat": repeat, "runs": runs, "aggregates": run.aggregates(runs)}
 
 
@@ -132,7 +132,7 @@ class TableTests(unittest.TestCase):
         for table in (run.terminal_table, run.markdown_table):
             last = table(summary, counts, list(run.IMPLEMENTATIONS)).splitlines()[-1]
             self.assertEqual(last, run.conditions(summary))
-            self.assertIn("mokume 0.11.2", last)
+            self.assertIn("mokume 0.25.0", last)
             self.assertIn("repeat 1", last)
 
 
